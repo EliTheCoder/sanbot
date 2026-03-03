@@ -1,6 +1,7 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import {
+  ApplicationCommandOptionType,
   ChannelType,
   Client,
   GatewayIntentBits,
@@ -48,9 +49,10 @@ client.on('interactionCreate', async (interaction) => {
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    const result = await postTierScheduleImages();
+    const selectedTier = interaction.options.getString('tier');
+    const result = await postTierScheduleImages(selectedTier);
     await interaction.editReply(
-      `Done. Posted ${result.sentCount} tier image(s) for ${result.matchType} week ${result.anchorMatchNum}.`
+      `Done. Posted ${result.sentCount} tier image(s) for ${result.matchType} week ${result.displayWeekNum}${result.selectedTier ? ` (${result.selectedTier})` : ''}.`
     );
   } catch (err) {
     log('error', 'postschedule failed', err);
@@ -60,7 +62,7 @@ client.on('interactionCreate', async (interaction) => {
 
 client.login(cfg.discordToken);
 
-async function postTierScheduleImages() {
+async function postTierScheduleImages(selectedTier) {
   const guild = await client.guilds.fetch(cfg.guildId);
   await guild.channels.fetch();
 
@@ -70,6 +72,7 @@ async function postTierScheduleImages() {
     timezone: cfg.timezone,
     matchType: cfg.stageOverride,
     matchNum: cfg.weekOverride,
+    tierName: selectedTier,
     outDir: cfg.outputDir,
   });
 
@@ -87,7 +90,7 @@ async function postTierScheduleImages() {
         : `match num ${renderResult.matchNumsInBlock[0]}`;
 
     await channel.send({
-      content: `**${cfg.franchiseName} - ${item.tierName}**\nSeason ${renderResult.seasonNumber} | ${renderResult.matchType} Week ${renderResult.anchorMatchNum} (${heading})`,
+      content: `**${cfg.franchiseName} - ${item.tierName}**\nSeason ${renderResult.seasonNumber} | ${renderResult.matchType} Week ${renderResult.displayWeekNum} (${heading})`,
       files: [path.resolve(item.outPath)],
     });
 
@@ -98,6 +101,8 @@ async function postTierScheduleImages() {
     sentCount,
     matchType: renderResult.matchType,
     anchorMatchNum: renderResult.anchorMatchNum,
+    displayWeekNum: renderResult.displayWeekNum,
+    selectedTier: renderResult.selectedTier || null,
   };
 }
 
@@ -107,6 +112,14 @@ async function ensureSlashCommand() {
     {
       name: 'postschedule',
       description: 'Generate schedule images and post them to each tier schedule channel.',
+      options: [
+        {
+          type: ApplicationCommandOptionType.String,
+          name: 'tier',
+          description: 'Optional tier name (for example: Elite, Superstar, Academy).',
+          required: false,
+        },
+      ],
     },
   ]);
 }

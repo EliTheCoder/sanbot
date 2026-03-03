@@ -50,6 +50,12 @@ npm start
 /postschedule
 ```
 
+Optional single-tier post:
+
+```text
+/postschedule tier:Elite
+```
+
 ## Configuration
 
 - `CSA_BASE_URL` (default: `https://api.playcsa.com`)

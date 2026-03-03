@@ -15,6 +15,7 @@ const baseCfg = {
   timezone: process.env.TIMEZONE || 'America/New_York',
   matchType: (argValue('--type') || process.env.CSA_MATCH_TYPE || '').toUpperCase(),
   matchNum: parseIntOrNull(argValue('--week') || process.env.CSA_MATCH_NUM),
+  tierName: argValue('--tier') || process.env.CSA_TIER_NAME || null,
   outDir:
     argValue('--out-dir') ||
     process.env.SCHEDULE_IMAGE_OUT_DIR ||
@@ -22,6 +23,8 @@ const baseCfg = {
 };
 
 let runtimeCfg = { ...baseCfg };
+const bundledFontPath = path.resolve(__dirname, '..', 'assets', 'fonts', 'PlusJakartaSans-wght.ttf');
+let embeddedFontCssCache = null;
 
 export async function generateTierScheduleImages(overrides = {}) {
   const cfg = buildConfig(overrides);
@@ -76,14 +79,17 @@ export async function generateTierScheduleImages(overrides = {}) {
     const orderB = tierOrder.get(normalizeText(b)) ?? 999;
     return orderA - orderB;
   });
+  const selectedTier = selectTier(orderedTiers, cfg.tierName);
 
   const franchiseLogoData = await loadLogoDataUri(franchise.logo);
   await fs.mkdir(cfg.outDir, { recursive: true });
 
   const matchNumsInBlock = [...new Set(weeklyMatches.map((m) => m.Match.match_num))].sort((a, b) => a - b);
+  const displayWeekNum = toDisplayWeekNum(matchNumsInBlock);
+  const embeddedFontCss = await getEmbeddedFontCss();
   const rendered = [];
 
-  for (const tierName of orderedTiers) {
+  for (const tierName of selectedTier ? [selectedTier] : orderedTiers) {
     const tierMatches = matchesByTier.get(tierName).sort((a, b) => {
       const aDate = new Date(a.Reschedule?.reschedule_date || a.Match.date).getTime();
       const bDate = new Date(b.Reschedule?.reschedule_date || b.Match.date).getTime();
@@ -111,7 +117,7 @@ export async function generateTierScheduleImages(overrides = {}) {
     const png = await renderTierSchedulePng({
       seasonNumber: season.number,
       matchType,
-      anchorMatchNum,
+      displayWeekNum,
       matchNumsInBlock,
       franchiseName: cfg.franchiseName,
       franchiseColor: franchise.color || '#d8ae52',
@@ -119,6 +125,7 @@ export async function generateTierScheduleImages(overrides = {}) {
       tierName,
       tierColor: findTierColor(tiers, tierName),
       rows,
+      embeddedFontCss,
     });
 
     const safeTier = slugify(tierName);
@@ -133,6 +140,8 @@ export async function generateTierScheduleImages(overrides = {}) {
     seasonNumber: season.number,
     matchType,
     anchorMatchNum,
+    displayWeekNum,
+    selectedTier,
     matchNumsInBlock,
     rendered,
   };
@@ -147,7 +156,7 @@ async function main() {
 async function renderTierSchedulePng({
   seasonNumber,
   matchType,
-  anchorMatchNum,
+  displayWeekNum,
   matchNumsInBlock,
   franchiseName,
   franchiseColor,
@@ -155,6 +164,7 @@ async function renderTierSchedulePng({
   tierName,
   tierColor,
   rows,
+  embeddedFontCss,
 }) {
   const width = 1400;
   const rowHeight = 180;
@@ -171,8 +181,8 @@ async function renderTierSchedulePng({
 
   const blockLabel =
     matchNumsInBlock.length > 1
-      ? `Week ${anchorMatchNum} (match nums ${matchNumsInBlock.join(', ')})`
-      : `Week ${anchorMatchNum}`;
+      ? `Week ${displayWeekNum} (match nums ${matchNumsInBlock.join(', ')})`
+      : `Week ${displayWeekNum}`;
 
   // Row cards
   const rowSvgs = rows.map((row, i) => {
@@ -329,7 +339,8 @@ async function renderTierSchedulePng({
       <rect width="${width}" height="${height}" fill="url(#glowBL)"/>
 
       <style>
-        text { font-family: "DejaVu Sans", "Noto Sans", Arial, Helvetica, sans-serif; }
+        ${embeddedFontCss}
+        text { font-family: "ScheduleSans", Arial, Helvetica, sans-serif; }
       </style>
 
       ${headerSvg}
@@ -360,6 +371,25 @@ function selectWeekBlockMatches(allMatches, anchorMatchNum) {
 function scheduleDateKey(match) {
   const iso = match.Reschedule?.reschedule_date || match.Match.date;
   return String(iso).slice(0, 10);
+}
+
+function toDisplayWeekNum(matchNumsInBlock) {
+  if (!Array.isArray(matchNumsInBlock) || matchNumsInBlock.length === 0) return 1;
+  const maxNum = Math.max(...matchNumsInBlock);
+  return Math.ceil(maxNum / 2);
+}
+
+function selectTier(availableTiers, requestedTier) {
+  if (!requestedTier) return null;
+  const requestedNorm = normalizeTierName(requestedTier);
+  if (!requestedNorm) return null;
+
+  const found = availableTiers.find((tier) => normalizeTierName(tier) === requestedNorm);
+  if (found) return found;
+
+  throw new Error(
+    `Tier "${requestedTier}" not found for this week. Available tiers: ${availableTiers.join(', ')}.`
+  );
 }
 
 function inferMatchNumToRender(allMatches) {
@@ -479,6 +509,10 @@ function normalizeText(v) {
   return String(v || '').trim().toLowerCase();
 }
 
+function normalizeTierName(v) {
+  return normalizeText(v).replace(/[^a-z0-9]/g, '');
+}
+
 function parseIntOrNull(v) {
   if (!v) return null;
   const n = Number.parseInt(v, 10);
@@ -498,6 +532,26 @@ function escapeXml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
+}
+
+async function getEmbeddedFontCss() {
+  if (embeddedFontCssCache) return embeddedFontCssCache;
+
+  try {
+    const bytes = await fs.readFile(bundledFontPath);
+    const base64 = bytes.toString('base64');
+    embeddedFontCssCache =
+      `@font-face { ` +
+      `font-family: "ScheduleSans"; ` +
+      `src: url("data:font/ttf;base64,${base64}") format("truetype"); ` +
+      `font-weight: 100 900; ` +
+      `font-style: normal; ` +
+      `}`;
+  } catch {
+    embeddedFontCssCache = '';
+  }
+
+  return embeddedFontCssCache;
 }
 
 if (isCliEntry()) {
