@@ -23,7 +23,8 @@ const baseCfg = {
 };
 
 let runtimeCfg = { ...baseCfg };
-const bundledFontPath = path.resolve(__dirname, '..', 'assets', 'fonts', 'PlusJakartaSans-wght.ttf');
+const interRegularPath = path.resolve(__dirname, '..', 'assets', 'fonts', 'Inter-Regular.woff2');
+const interBoldPath = path.resolve(__dirname, '..', 'assets', 'fonts', 'Inter-Bold.woff2');
 let embeddedFontCssCache = null;
 
 export async function generateTierScheduleImages(overrides = {}) {
@@ -340,7 +341,7 @@ async function renderTierSchedulePng({
 
       <style>
         ${embeddedFontCss}
-        text { font-family: "ScheduleSans", Arial, Helvetica, sans-serif; }
+        text { font-family: "InterEmbedded", Arial, Helvetica, sans-serif; }
       </style>
 
       ${headerSvg}
@@ -538,15 +539,27 @@ async function getEmbeddedFontCss() {
   if (embeddedFontCssCache) return embeddedFontCssCache;
 
   try {
-    const bytes = await fs.readFile(bundledFontPath);
-    const base64 = bytes.toString('base64');
-    embeddedFontCssCache =
-      `@font-face { ` +
-      `font-family: "ScheduleSans"; ` +
-      `src: url("data:font/ttf;base64,${base64}") format("truetype"); ` +
-      `font-weight: 100 900; ` +
-      `font-style: normal; ` +
-      `}`;
+    const [regularBytes, boldBytes] = await Promise.all([
+      fs.readFile(interRegularPath),
+      fs.readFile(interBoldPath),
+    ]);
+    const regularBase64 = regularBytes.toString('base64');
+    const boldBase64 = boldBytes.toString('base64');
+
+    embeddedFontCssCache = [
+      '@font-face {',
+      'font-family: "InterEmbedded";',
+      `src: url("data:font/woff2;base64,${regularBase64}") format("woff2");`,
+      'font-weight: 400;',
+      'font-style: normal;',
+      '}',
+      '@font-face {',
+      'font-family: "InterEmbedded";',
+      `src: url("data:font/woff2;base64,${boldBase64}") format("woff2");`,
+      'font-weight: 700;',
+      'font-style: normal;',
+      '}',
+    ].join('');
   } catch {
     embeddedFontCssCache = '';
   }
