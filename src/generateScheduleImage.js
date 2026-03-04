@@ -230,10 +230,6 @@ async function renderTierSchedulePng({
       <text x="192" y="${cardY + 144}" font-size="22" fill="rgba(220,230,255,0.95)"
             font-weight="700">${escapeXml(row.captainName || 'TBD')}</text>
 
-      <!-- Divider between text and time -->
-      <line x1="${timeBlockRight - 180}" y1="${cardY + 30}" x2="${timeBlockRight - 180}" y2="${cardY + cardH - 30}"
-            stroke="rgba(255,255,255,0.07)" stroke-width="1.5"/>
-
       <!-- Time & BO block -->
       <text x="${timeBlockRight}" y="${cardY + 85}" text-anchor="end"
             font-size="38" font-weight="800" fill="#f0f6ff">${escapeXml(row.timeText)}</text>
