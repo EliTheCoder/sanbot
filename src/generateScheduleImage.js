@@ -425,18 +425,50 @@ async function getCurrentSeason() {
   return seasons[0];
 }
 
-async function csaGet(pathname, query = {}) {
-  const url = new URL(pathname, runtimeCfg.csaBaseUrl);
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined || value === null || value === '') continue;
-    url.searchParams.set(key, String(value));
+async function csaGet(pathname, query = {}, options = {}) {
+  const shouldPaginate =
+    options.paginate ??
+    (query.page === undefined && query.size === undefined);
+
+  const pageSize = query.size ?? options.size ?? 100;
+  let page = query.page ?? 1;
+  const allItems = [];
+
+  while (true) {
+    const url = new URL(pathname, runtimeCfg.csaBaseUrl);
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null || value === '') continue;
+      url.searchParams.set(key, String(value));
+    }
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('size', String(pageSize));
+
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`CSA request failed (${res.status}) ${url.pathname}: ${body.slice(0, 220)}`);
+    }
+
+    const payload = await res.json();
+
+    if (!payload || typeof payload !== 'object' || !Object.hasOwn(payload, 'data')) {
+      return payload;
+    }
+
+    const data = payload.data;
+    if (!Array.isArray(data)) {
+      return data;
+    }
+
+    allItems.push(...data);
+    const totalPages = Number(payload.total_pages) || 1;
+
+    if (!shouldPaginate || page >= totalPages) {
+      return allItems;
+    }
+
+    page += 1;
   }
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`CSA request failed (${res.status}) ${url.pathname}: ${body.slice(0, 220)}`);
-  }
-  return res.json();
 }
 
 async function loadLogoDataUri(url) {
