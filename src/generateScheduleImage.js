@@ -23,6 +23,16 @@ const baseCfg = {
 };
 
 let runtimeCfg = { ...baseCfg };
+
+const TIER_TIMES = {
+  academy:      ['7:45 PM ET', '8:30 PM ET'],
+  novice:       ['8:30 PM ET', '9:15 PM ET'],
+  professional: ['7:45 PM ET', '8:30 PM ET'],
+  elite:        ['7:00 PM ET', '7:45 PM ET'],
+  superstar:    ['8:30 PM ET', '9:15 PM ET'],
+  premier:      ['7:00 PM ET', '7:45 PM ET', '8:30 PM ET'],
+  'world class':['8:00 PM ET', '8:30 PM ET', '9:00 PM ET', '9:30 PM ET', '10:00 PM ET'],
+};
 const interRegularPath = path.resolve(__dirname, '..', 'assets', 'fonts', 'Inter-Regular.woff2');
 const interBoldPath = path.resolve(__dirname, '..', 'assets', 'fonts', 'Inter-Bold.woff2');
 let embeddedFontCssCache = null;
@@ -97,13 +107,21 @@ export async function generateTierScheduleImages(overrides = {}) {
       return aDate - bDate;
     });
 
+    const tierTimesKey = normalizeText(tierName);
+    const tierTimeSlots = TIER_TIMES[tierTimesKey] || null;
+
     const rows = [];
-    for (const match of tierMatches) {
+    for (const [i, match] of tierMatches.entries()) {
       const isHome = normalizeText(match.home) === normalizeText(cfg.franchiseName);
       const opponentName = isHome ? match.away : match.home;
       const opponentLogoUrl = logosByName.get(normalizeText(opponentName)) || null;
       const opponentFranchiseId = franchiseIdByName.get(normalizeText(opponentName));
       const captainName = getCaptainName(captainByFranchiseTier, opponentFranchiseId, tierName);
+      const matchDate = match.Reschedule?.reschedule_date || match.Match.date;
+      const tierTime = tierTimeSlots?.[i] ?? null;
+      const timeText = tierTime
+        ? `${formatMatchDate(matchDate)}, ${tierTime}`
+        : formatMatchTime(matchDate);
 
       rows.push({
         opponentName,
@@ -111,7 +129,7 @@ export async function generateTierScheduleImages(overrides = {}) {
         opponentLogoData: await loadLogoDataUri(opponentLogoUrl),
         homeAway: isHome ? 'HOME' : 'AWAY',
         matchNum: match.Match.match_num,
-        timeText: formatMatchTime(match.Reschedule?.reschedule_date || match.Match.date),
+        timeText,
         boText: `BO${match.Match.best_of}`,
       });
     }
@@ -393,22 +411,41 @@ function selectTier(availableTiers, requestedTier) {
   );
 }
 
+function getCurrentWeekWindow() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+  let start;
+  if (day === 3 || day > 3) {
+    // Wed–Sat: snap forward to next Sunday
+    const daysUntilSunday = (7 - day) % 7;
+    start = new Date(now);
+    start.setDate(now.getDate() + (daysUntilSunday === 0 ? 7 : daysUntilSunday));
+  } else {
+    // Sun–Tue: snap back to last Sunday
+    start = new Date(now);
+    start.setDate(now.getDate() - day);
+  }
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
 function inferMatchNumToRender(allMatches) {
-  const now = Date.now();
-  const grouped = new Map();
-  for (const m of allMatches) {
-    const week = m.Match.match_num;
-    if (!grouped.has(week)) grouped.set(week, []);
-    grouped.get(week).push(m);
+  const { start, end } = getCurrentWeekWindow();
+  const thisWeek = allMatches.filter((m) => {
+    const iso = m.Reschedule?.reschedule_date || m.Match.date;
+    const date = new Date(String(iso).slice(0, 10));
+    return date >= start && date <= end;
+  });
+  if (thisWeek.length > 0) {
+    const nums = thisWeek.map((m) => m.Match.match_num).filter(Boolean);
+    return Math.min(...nums);
   }
-  const weeks = [...grouped.keys()].sort((a, b) => a - b);
-  for (const week of weeks) {
-    const list = grouped.get(week);
-    const hasUpcoming = list.some((m) => new Date(m.Reschedule?.reschedule_date || m.Match.date).getTime() >= now);
-    const hasUnreported = list.some((m) => !m.Result?.is_reported);
-    if (hasUpcoming || hasUnreported) return week;
-  }
-  return weeks[weeks.length - 1];
+  // fallback: most recent match
+  const allNums = allMatches.map((m) => m.Match.match_num).filter(Boolean);
+  return Math.max(...allNums);
 }
 
 function findTierColor(tiers, tierName) {
@@ -486,6 +523,16 @@ async function loadLogoDataUri(url) {
   } catch {
     return null;
   }
+}
+
+function formatMatchDate(isoString) {
+  const date = new Date(isoString);
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: runtimeCfg.timezone,
+  }).format(date);
 }
 
 function formatMatchTime(isoString) {
