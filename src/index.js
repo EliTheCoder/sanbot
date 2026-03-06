@@ -71,7 +71,7 @@ async function postTierScheduleImages(selectedTier, weekNum) {
     franchiseName: cfg.franchiseName,
     timezone: cfg.timezone,
     matchType: cfg.stageOverride,
-    matchNum: weekNum,
+    weekNum: weekNum,
     tierName: selectedTier,
     outDir: cfg.outputDir,
   });
@@ -111,7 +111,7 @@ async function ensureSlashCommand() {
         {
           type: ApplicationCommandOptionType.Integer,
           name: 'week',
-          description: 'Match number to post the schedule for.',
+          description: 'Week number to post the schedule for.',
           required: true,
           min_value: 1,
         },

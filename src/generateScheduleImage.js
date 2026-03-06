@@ -14,7 +14,8 @@ const baseCfg = {
   franchiseName: process.env.CSA_FRANCHISE_NAME || 'San Antonio Stallions',
   timezone: process.env.TIMEZONE || 'America/New_York',
   matchType: (argValue('--type') || process.env.CSA_MATCH_TYPE || '').toUpperCase(),
-  matchNum: parseIntOrNull(argValue('--week') || process.env.CSA_MATCH_NUM),
+  weekNum: parseIntOrNull(argValue('--week') || process.env.CSA_WEEK_NUM),
+  matchNum: parseIntOrNull(argValue('--match-num') || process.env.CSA_MATCH_NUM),
   tierName: argValue('--tier') || process.env.CSA_TIER_NAME || null,
   outDir:
     argValue('--out-dir') ||
@@ -66,10 +67,14 @@ export async function generateTierScheduleImages(overrides = {}) {
     throw new Error(`No matches found for ${cfg.franchiseName} in ${matchType}.`);
   }
 
-  const anchorMatchNum = cfg.matchNum ?? inferMatchNumToRender(allMatches);
+  let anchorMatchNum;
+  if (cfg.matchNum) anchorMatchNum = cfg.matchNum;
+  else if (cfg.weekNum) anchorMatchNum = cfg.weekNum * 2 - 1;
+  else anchorMatchNum = inferMatchNumToRender(allMatches);
+
   const weeklyMatches = selectWeekBlockMatches(allMatches, anchorMatchNum);
   if (weeklyMatches.length === 0) {
-    throw new Error(`No matches found for week ${anchorMatchNum}.`);
+    throw new Error(`No matches found for week ${cfg.weekNum || Math.ceil(anchorMatchNum / 2)} (anchor match ${anchorMatchNum}).`);
   }
 
   const logosByName = new Map();
@@ -96,7 +101,7 @@ export async function generateTierScheduleImages(overrides = {}) {
   await fs.mkdir(cfg.outDir, { recursive: true });
 
   const matchNumsInBlock = [...new Set(weeklyMatches.map((m) => m.Match.match_num))].sort((a, b) => a - b);
-  const displayWeekNum = anchorMatchNum;
+  const displayWeekNum = cfg.weekNum || Math.ceil(anchorMatchNum / 2);
   const embeddedFontCss = await getEmbeddedFontCss();
   const rendered = [];
 
@@ -117,8 +122,9 @@ export async function generateTierScheduleImages(overrides = {}) {
       const opponentLogoUrl = logosByName.get(normalizeText(opponentName)) || null;
       const opponentFranchiseId = franchiseIdByName.get(normalizeText(opponentName));
       const captainName = getCaptainName(captainByFranchiseTier, opponentFranchiseId, tierName);
+      const isRescheduled = !!match.Reschedule?.reschedule_date;
+      const tierTime = !isRescheduled && tierTimeSlots ? tierTimeSlots[i] : null;
       const matchDate = match.Reschedule?.reschedule_date || match.Match.date;
-      const tierTime = tierTimeSlots?.[i] ?? null;
 
       rows.push({
         opponentName,
@@ -166,8 +172,8 @@ export async function generateTierScheduleImages(overrides = {}) {
 }
 
 async function main() {
-  if (!baseCfg.matchNum) {
-    console.error('Error: --week <number> is required');
+  if (!baseCfg.weekNum && !baseCfg.matchNum) {
+    console.error('Error: --week <number> or --match-num <number> is required');
     process.exitCode = 1;
     return;
   }
