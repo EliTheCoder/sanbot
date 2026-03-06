@@ -19,7 +19,6 @@ const cfg = {
   csaBaseUrl: process.env.CSA_BASE_URL || 'https://api.playcsa.com',
   timezone: process.env.TIMEZONE || 'America/New_York',
   stageOverride: process.env.CSA_MATCH_TYPE?.toUpperCase(),
-  weekOverride: parseIntOrNull(process.env.CSA_MATCH_NUM),
   outputDir: process.env.SCHEDULE_IMAGE_OUT_DIR,
   logLevel: (process.env.LOG_LEVEL || 'info').toLowerCase(),
 };
@@ -50,7 +49,8 @@ client.on('interactionCreate', async (interaction) => {
 
   try {
     const selectedTier = interaction.options.getString('tier');
-    const result = await postTierScheduleImages(selectedTier);
+    const weekNum = interaction.options.getInteger('week');
+    const result = await postTierScheduleImages(selectedTier, weekNum);
     await interaction.editReply(
       `Done. Posted ${result.sentCount} tier image(s) for ${result.matchType} week ${result.displayWeekNum}${result.selectedTier ? ` (${result.selectedTier})` : ''}.`
     );
@@ -62,7 +62,7 @@ client.on('interactionCreate', async (interaction) => {
 
 client.login(cfg.discordToken);
 
-async function postTierScheduleImages(selectedTier) {
+async function postTierScheduleImages(selectedTier, weekNum) {
   const guild = await client.guilds.fetch(cfg.guildId);
   await guild.channels.fetch();
 
@@ -71,7 +71,7 @@ async function postTierScheduleImages(selectedTier) {
     franchiseName: cfg.franchiseName,
     timezone: cfg.timezone,
     matchType: cfg.stageOverride,
-    matchNum: cfg.weekOverride,
+    matchNum: weekNum,
     tierName: selectedTier,
     outDir: cfg.outputDir,
   });
@@ -108,6 +108,13 @@ async function ensureSlashCommand() {
       name: 'postschedule',
       description: 'Generate schedule images and post them to each tier schedule channel.',
       options: [
+        {
+          type: ApplicationCommandOptionType.Integer,
+          name: 'week',
+          description: 'Match number to post the schedule for.',
+          required: true,
+          min_value: 1,
+        },
         {
           type: ApplicationCommandOptionType.String,
           name: 'tier',

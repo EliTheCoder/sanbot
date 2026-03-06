@@ -150,6 +150,11 @@ export async function generateTierScheduleImages(overrides = {}) {
 }
 
 async function main() {
+  if (!baseCfg.matchNum) {
+    console.error('Error: --week <number> is required');
+    process.exitCode = 1;
+    return;
+  }
   const result = await generateTierScheduleImages();
   console.log(`Rendered ${result.rendered.length} tier image(s).`);
   for (const item of result.rendered) console.log(`- ${item.outPath}`);
