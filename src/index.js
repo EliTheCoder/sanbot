@@ -84,13 +84,8 @@ async function postTierScheduleImages(selectedTier) {
       continue;
     }
 
-    const heading =
-      renderResult.matchNumsInBlock.length > 1
-        ? `match nums ${renderResult.matchNumsInBlock.join(', ')}`
-        : `match num ${renderResult.matchNumsInBlock[0]}`;
-
     await channel.send({
-      content: `**${cfg.franchiseName} - ${item.tierName}**\nSeason ${renderResult.seasonNumber} | ${renderResult.matchType} Week ${renderResult.displayWeekNum} (${heading})`,
+      content: `**${cfg.franchiseName} - ${item.tierName}**\nSeason ${renderResult.seasonNumber} | ${renderResult.matchType} Week ${renderResult.displayWeekNum}`,
       files: [path.resolve(item.outPath)],
     });
 

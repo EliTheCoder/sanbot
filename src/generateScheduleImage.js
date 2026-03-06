@@ -110,6 +110,7 @@ export async function generateTierScheduleImages(overrides = {}) {
         captainName,
         opponentLogoData: await loadLogoDataUri(opponentLogoUrl),
         homeAway: isHome ? 'HOME' : 'AWAY',
+        matchNum: match.Match.match_num,
         timeText: formatMatchTime(match.Reschedule?.reschedule_date || match.Match.date),
         boText: `BO${match.Match.best_of}`,
       });
@@ -180,10 +181,7 @@ async function renderTierSchedulePng({
   const fc = hexToRgb(franchiseColor) || { r: 216, g: 174, b: 82 };
   const tc = hexToRgb(tierColor) || { r: 168, g: 179, b: 214 };
 
-  const blockLabel =
-    matchNumsInBlock.length > 1
-      ? `Week ${displayWeekNum} (match nums ${matchNumsInBlock.join(', ')})`
-      : `Week ${displayWeekNum}`;
+  const blockLabel = `Week ${displayWeekNum}`;
 
   // Row cards
   const rowSvgs = rows.map((row, i) => {
@@ -219,6 +217,12 @@ async function renderTierSchedulePng({
             fill="${tagBg}" stroke="${tagColor}" stroke-width="1.4"/>
       <text x="127" y="${cardY + 43}" text-anchor="middle"
             font-size="16" font-weight="800" fill="${tagColor}" letter-spacing="1.5">${row.homeAway}</text>
+
+      <!-- Match number badge -->
+      <rect x="180" y="${cardY + 22}" width="86" height="32" rx="8"
+            fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1.2"/>
+      <text x="223" y="${cardY + 43}" text-anchor="middle"
+            font-size="15" font-weight="700" fill="rgba(180,195,235,0.7)" letter-spacing="0.5">Match ${row.matchNum}</text>
 
       <!-- Opponent name -->
       <text x="86" y="${cardY + 104}" font-size="50" font-weight="900" fill="#f0f6ff"
