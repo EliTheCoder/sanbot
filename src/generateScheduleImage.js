@@ -86,7 +86,7 @@ export async function generateTierScheduleImages(overrides = {}) {
   await fs.mkdir(cfg.outDir, { recursive: true });
 
   const matchNumsInBlock = [...new Set(weeklyMatches.map((m) => m.Match.match_num))].sort((a, b) => a - b);
-  const displayWeekNum = toDisplayWeekNum(matchNumsInBlock);
+  const displayWeekNum = anchorMatchNum;
   const embeddedFontCss = await getEmbeddedFontCss();
   const rendered = [];
 
@@ -379,11 +379,6 @@ function scheduleDateKey(match) {
   return String(iso).slice(0, 10);
 }
 
-function toDisplayWeekNum(matchNumsInBlock) {
-  if (!Array.isArray(matchNumsInBlock) || matchNumsInBlock.length === 0) return 1;
-  const maxNum = Math.max(...matchNumsInBlock);
-  return Math.ceil(maxNum / 2);
-}
 
 function selectTier(availableTiers, requestedTier) {
   if (!requestedTier) return null;
