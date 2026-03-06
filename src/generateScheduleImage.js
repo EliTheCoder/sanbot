@@ -119,9 +119,6 @@ export async function generateTierScheduleImages(overrides = {}) {
       const captainName = getCaptainName(captainByFranchiseTier, opponentFranchiseId, tierName);
       const matchDate = match.Reschedule?.reschedule_date || match.Match.date;
       const tierTime = tierTimeSlots?.[i] ?? null;
-      const timeText = tierTime
-        ? `${formatMatchDate(matchDate)}, ${tierTime}`
-        : formatMatchTime(matchDate);
 
       rows.push({
         opponentName,
@@ -129,7 +126,8 @@ export async function generateTierScheduleImages(overrides = {}) {
         opponentLogoData: await loadLogoDataUri(opponentLogoUrl),
         homeAway: isHome ? 'HOME' : 'AWAY',
         matchNum: match.Match.match_num,
-        timeText,
+        dateText: formatMatchDate(matchDate),
+        timeText: tierTime ?? formatMatchTimeOnly(matchDate),
         boText: `BO${match.Match.best_of}`,
       });
     }
@@ -192,175 +190,197 @@ async function renderTierSchedulePng({
   embeddedFontCss,
 }) {
   const width = 1400;
-  const rowHeight = 180;
-  const headerHeight = 280;
-  const footerHeight = 56;
-  const rowGap = 12;
-  const paddingV = 20;
+  const rowHeight = 160;
+  const headerHeight = 248; // card at y=24, h=200, 24px bottom margin
+  const footerHeight = 52;
+  const rowGap = 8;
+  const paddingV = 16;
   const contentHeight = rows.length * rowHeight + Math.max(rows.length - 1, 0) * rowGap + paddingV * 2;
   const height = headerHeight + contentHeight + footerHeight;
 
-  // Parse franchise color for rgba usage
-  const fc = hexToRgb(franchiseColor) || { r: 216, g: 174, b: 82 };
   const tc = hexToRgb(tierColor) || { r: 168, g: 179, b: 214 };
 
-  const blockLabel = `Week ${displayWeekNum}`;
+  // Shared card geometry
+  const cardX = 40;
+  const cardW = width - 80; // 1320
 
-  // Row cards
+  // Row geometry (constants, per-row cardY varies)
+  const accentW = 6;
+  const rowContentX = cardX + accentW + 22; // 68
+  const timePanelW = 280;
+  const timePanelX = cardX + cardW - timePanelW; // 1080
+  const logoR = 38;
+  const logoCx = timePanelX + timePanelW - logoR - 18; // 1304
+  const timeTextCx = Math.round((timePanelX + logoCx - logoR - 12) / 2); // ~1167
+
+  // ── Header ───────────────────────────────────────────────────────────────
+  const hY = 24;
+  const hH = 200;
+  const hLeftW = 300;
+  const hLogoCx = cardX + hLeftW / 2; // 190
+  const hLogoCy = hY + hH / 2;        // 124
+  const hContentX = cardX + hLeftW + 28; // 368
+  const tierLabel = tierName.toUpperCase();
+  const tierBadgeW = Math.max(tierLabel.length * 13 + 36, 80);
+  const tierBadgeX = cardX + cardW - tierBadgeW - 20;
+
+  const headerSvg = `
+    <defs>
+      <clipPath id="hClip">
+        <rect x="${cardX}" y="${hY}" width="${cardW}" height="${hH}" rx="20"/>
+      </clipPath>
+      <linearGradient id="hPanelGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="70%"  stop-color="${franchiseColor}" stop-opacity="0.25"/>
+        <stop offset="100%" stop-color="${franchiseColor}" stop-opacity="0"/>
+      </linearGradient>
+      <clipPath id="hLogoClip">
+        <circle cx="${hLogoCx}" cy="${hLogoCy}" r="66"/>
+      </clipPath>
+    </defs>
+
+    <!-- Header card -->
+    <rect x="${cardX}" y="${hY}" width="${cardW}" height="${hH}" rx="20" fill="#0b1127"/>
+
+    <!-- Top accent stripe (clipped to card rx) -->
+    <rect x="${cardX}" y="${hY}" width="${cardW}" height="4" fill="${franchiseColor}" clip-path="url(#hClip)"/>
+
+    <!-- Franchise color left panel -->
+    <rect x="${cardX}" y="${hY}" width="${hLeftW}" height="${hH}" fill="url(#hPanelGrad)" clip-path="url(#hClip)"/>
+
+    <!-- Panel divider -->
+    <line x1="${cardX + hLeftW}" y1="${hY + 30}" x2="${cardX + hLeftW}" y2="${hY + hH - 30}"
+          stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+    <!-- Logo background -->
+    <circle cx="${hLogoCx}" cy="${hLogoCy}" r="70" fill="rgba(0,0,0,0.22)"/>
+    <circle cx="${hLogoCx}" cy="${hLogoCy}" r="66" fill="rgba(0,0,0,0.18)"
+            stroke="rgba(255,255,255,0.13)" stroke-width="1.5"/>
+
+    ${franchiseLogoData
+      ? `<image x="${hLogoCx - 66}" y="${hLogoCy - 66}" width="132" height="132"
+               href="${franchiseLogoData}" clip-path="url(#hLogoClip)"/>`
+      : ''}
+
+    <!-- Tier badge -->
+    <rect x="${tierBadgeX}" y="${hY + 20}" width="${tierBadgeW}" height="30" rx="15"
+          fill="rgba(${tc.r},${tc.g},${tc.b},0.12)" stroke="${tierColor}" stroke-width="1.5"/>
+    <text x="${tierBadgeX + tierBadgeW / 2}" y="${hY + 40}" text-anchor="middle"
+          font-size="14" font-weight="800" fill="${tierColor}"
+          letter-spacing="1.5">${escapeXml(tierLabel)}</text>
+
+    <!-- Franchise name -->
+    <text x="${hContentX}" y="${hY + 113}" font-size="62" font-weight="900"
+          fill="#ffffff" letter-spacing="-1.5">${escapeXml(franchiseName)}</text>
+
+    <!-- Info line -->
+    <text x="${hContentX}" y="${hY + 152}" font-size="22" font-weight="700"
+          fill="${franchiseColor}" opacity="0.92">
+      ${escapeXml(matchType)} · Season ${seasonNumber} · Week ${displayWeekNum}
+    </text>
+
+    <!-- Subtitle label -->
+    <text x="${hContentX + 2}" y="${hY + 183}" font-size="13" font-weight="600"
+          fill="rgba(255,255,255,0.28)" letter-spacing="3.5">TIER SCHEDULE</text>
+  `;
+
+  // ── Rows ─────────────────────────────────────────────────────────────────
   const rowSvgs = rows.map((row, i) => {
     const cardY = headerHeight + paddingV + i * (rowHeight + rowGap);
     const cardH = rowHeight;
     const isHome = row.homeAway === 'HOME';
-    const tagColor = isHome ? '#22c55e' : '#60a5fa';
-    const tagBg   = isHome ? 'rgba(34,197,94,0.12)' : 'rgba(96,165,250,0.12)';
-
-    // Left accent bar color = home/away
-    const accentBar = tagColor;
-
-    // Logo area: right side, vertically centered
-    const logoSize = 100;
-    const logoX = width - 80 - logoSize;
-    const logoY = cardY + (cardH - logoSize) / 2;
-    const logoCx = logoX + logoSize / 2;
-    const logoCy = logoY + logoSize / 2;
-
-    // Time block: to the left of the logo
-    const timeBlockRight = logoX - 24;
+    const tagColor = isHome ? '#4ade80' : '#60a5fa';
+    const tagBg    = isHome ? 'rgba(74,222,128,0.1)' : 'rgba(96,165,250,0.1)';
+    const logoCyRow = cardY + cardH / 2;
 
     return `
-      <!-- Row ${i} card -->
-      <rect x="56" y="${cardY}" width="${width - 112}" height="${cardH}" rx="20"
-            fill="rgba(10,16,35,0.92)" stroke="rgba(255,255,255,0.06)" stroke-width="1.5"/>
-
-      <!-- Left accent bar -->
-      <rect x="56" y="${cardY + 20}" width="5" height="${cardH - 40}" rx="3" fill="${accentBar}"/>
-
-      <!-- Home/Away tag -->
-      <rect x="86" y="${cardY + 22}" width="82" height="32" rx="8"
-            fill="${tagBg}" stroke="${tagColor}" stroke-width="1.4"/>
-      <text x="127" y="${cardY + 43}" text-anchor="middle"
-            font-size="16" font-weight="800" fill="${tagColor}" letter-spacing="1.5">${row.homeAway}</text>
-
-      <!-- Match number badge -->
-      <rect x="180" y="${cardY + 22}" width="86" height="32" rx="8"
-            fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1.2"/>
-      <text x="223" y="${cardY + 43}" text-anchor="middle"
-            font-size="15" font-weight="700" fill="rgba(180,195,235,0.7)" letter-spacing="0.5">Match ${row.matchNum}</text>
-
-      <!-- Opponent name -->
-      <text x="86" y="${cardY + 104}" font-size="50" font-weight="900" fill="#f0f6ff"
-            letter-spacing="-0.5">${escapeXml(row.opponentName)}</text>
-
-      <!-- Captain label -->
-      <text x="88" y="${cardY + 144}" font-size="22" fill="rgba(180,195,235,0.75)"
-            font-weight="600">Captain</text>
-      <text x="192" y="${cardY + 144}" font-size="22" fill="rgba(220,230,255,0.95)"
-            font-weight="700">${escapeXml(row.captainName || 'TBD')}</text>
-
-      <!-- Time & BO block -->
-      <text x="${timeBlockRight}" y="${cardY + 85}" text-anchor="end"
-            font-size="38" font-weight="800" fill="#f0f6ff">${escapeXml(row.timeText)}</text>
-      <rect x="${timeBlockRight - 68}" y="${cardY + 100}" width="68" height="30" rx="8"
-            fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
-      <text x="${timeBlockRight - 34}" y="${cardY + 121}" text-anchor="middle"
-            font-size="17" font-weight="800" fill="rgba(180,195,235,0.9)"
-            letter-spacing="1">${escapeXml(row.boText)}</text>
-
-      <!-- Opponent logo circle -->
-      <circle cx="${logoCx}" cy="${logoCy}" r="${logoSize / 2 + 4}"
-              fill="rgba(6,12,28,0.9)" stroke="rgba(255,255,255,0.1)" stroke-width="1.5"/>
-      ${row.opponentLogoData
-        ? `<image x="${logoX}" y="${logoY}" width="${logoSize}" height="${logoSize}"
-                  href="${row.opponentLogoData}" clip-path="url(#logoClip${i})"/>`
-        : `<text x="${logoCx}" y="${logoCy + 14}" text-anchor="middle"
-                 font-size="36" fill="rgba(180,195,235,0.3)">?</text>`}
       <defs>
-        <clipPath id="logoClip${i}">
-          <circle cx="${logoCx}" cy="${logoCy}" r="${logoSize / 2}"/>
+        <clipPath id="rClip${i}">
+          <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="14"/>
+        </clipPath>
+        <clipPath id="oClip${i}">
+          <circle cx="${logoCx}" cy="${logoCyRow}" r="${logoR}"/>
         </clipPath>
       </defs>
+
+      <!-- Row card -->
+      <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="14" fill="#0b1127"/>
+
+      <!-- Accent bar -->
+      <rect x="${cardX}" y="${cardY}" width="${accentW}" height="${cardH}"
+            fill="${tagColor}" clip-path="url(#rClip${i})"/>
+
+      <!-- Time panel background -->
+      <rect x="${timePanelX}" y="${cardY}" width="${timePanelW}" height="${cardH}"
+            fill="rgba(255,255,255,0.022)" clip-path="url(#rClip${i})"/>
+      <line x1="${timePanelX}" y1="${cardY + 22}" x2="${timePanelX}" y2="${cardY + cardH - 22}"
+            stroke="rgba(255,255,255,0.055)" stroke-width="1"/>
+
+      <!-- HOME/AWAY tag -->
+      <rect x="${rowContentX}" y="${cardY + 14}" width="72" height="25" rx="7"
+            fill="${tagBg}" stroke="${tagColor}" stroke-width="1.2"/>
+      <text x="${rowContentX + 36}" y="${cardY + 31}" text-anchor="middle"
+            font-size="12" font-weight="800" fill="${tagColor}"
+            letter-spacing="1.5">${row.homeAway}</text>
+
+      <!-- Match number badge -->
+      <rect x="${rowContentX + 80}" y="${cardY + 14}" width="78" height="25" rx="7"
+            fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+      <text x="${rowContentX + 119}" y="${cardY + 31}" text-anchor="middle"
+            font-size="12" font-weight="700" fill="rgba(155,175,225,0.55)"
+            letter-spacing="0.5">Match ${row.matchNum}</text>
+
+      <!-- Opponent name -->
+      <text x="${rowContentX}" y="${cardY + 93}" font-size="50" font-weight="900"
+            fill="#edf2ff" letter-spacing="-0.5">${escapeXml(row.opponentName)}</text>
+
+      <!-- Captain -->
+      <text x="${rowContentX}" y="${cardY + 134}" font-size="19"
+            fill="rgba(155,175,225,0.58)" font-weight="500">Captain
+        <tspan font-weight="700" fill="rgba(210,225,255,0.88)">${escapeXml(row.captainName || 'TBD')}</tspan>
+      </text>
+
+      <!-- Date -->
+      <text x="${timeTextCx}" y="${cardY + 58}" text-anchor="middle"
+            font-size="16" font-weight="600" fill="rgba(145,165,220,0.62)"
+            letter-spacing="0.3">${escapeXml(row.dateText)}</text>
+
+      <!-- Time -->
+      <text x="${timeTextCx}" y="${cardY + 99}" text-anchor="middle"
+            font-size="26" font-weight="800" fill="#edf2ff">${escapeXml(row.timeText)}</text>
+
+      <!-- BO badge -->
+      <rect x="${timeTextCx - 30}" y="${cardY + 110}" width="60" height="26" rx="8"
+            fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.09)" stroke-width="1"/>
+      <text x="${timeTextCx}" y="${cardY + 128}" text-anchor="middle"
+            font-size="14" font-weight="800" fill="rgba(165,185,235,0.85)"
+            letter-spacing="1">${escapeXml(row.boText)}</text>
+
+      <!-- Opponent logo -->
+      <circle cx="${logoCx}" cy="${logoCyRow}" r="${logoR + 3}"
+              fill="rgba(5,8,20,0.85)" stroke="rgba(255,255,255,0.07)" stroke-width="1.5"/>
+      ${row.opponentLogoData
+        ? `<image x="${logoCx - logoR}" y="${logoCyRow - logoR}" width="${logoR * 2}" height="${logoR * 2}"
+                  href="${row.opponentLogoData}" clip-path="url(#oClip${i})"/>`
+        : `<text x="${logoCx}" y="${logoCyRow + 10}" text-anchor="middle"
+                 font-size="28" fill="rgba(155,175,225,0.25)">?</text>`}
     `;
   }).join('');
 
-  // Header
-  const headerSvg = `
-    <!-- Header card -->
-    <rect x="56" y="40" width="${width - 112}" height="${headerHeight - 52}" rx="24"
-          fill="rgba(8,14,30,0.97)" stroke="rgba(255,255,255,0.07)" stroke-width="1.5"/>
-
-    <!-- Top color bar -->
-    <rect x="56" y="40" width="${width - 112}" height="6" rx="3"
-          fill="${franchiseColor}"/>
-
-    <!-- Franchise logo circle -->
-    <circle cx="160" cy="${40 + (headerHeight - 52) / 2}" r="72"
-            fill="rgba(4,9,22,0.95)" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
-    ${franchiseLogoData
-      ? `<image x="90" y="${40 + (headerHeight - 52) / 2 - 68}" width="140" height="140"
-               href="${franchiseLogoData}" clip-path="url(#franchiseClip)"/>
-         <defs>
-           <clipPath id="franchiseClip">
-             <circle cx="160" cy="${40 + (headerHeight - 52) / 2}" r="68"/>
-           </clipPath>
-         </defs>`
-      : ''}
-
-    <!-- Tier badge -->
-    <rect x="264" y="72" width="${tierName.length * 14 + 40}" height="38" rx="19"
-          fill="rgba(${tc.r},${tc.g},${tc.b},0.15)" stroke="${tierColor}" stroke-width="1.8"/>
-    <text x="${264 + (tierName.length * 14 + 40) / 2}" y="97" text-anchor="middle"
-          font-size="22" font-weight="800" fill="${tierColor}"
-          letter-spacing="1">${escapeXml(tierName)}</text>
-
-    <!-- Franchise name -->
-    <text x="264" y="175" font-size="66" font-weight="900" fill="#f0f6ff"
-          letter-spacing="-1">${escapeXml(franchiseName)}</text>
-
-    <!-- Match info line -->
-    <text x="264" y="220" font-size="30" font-weight="700"
-          fill="${franchiseColor}">${escapeXml(matchType)} ${escapeXml(blockLabel)} | Season ${seasonNumber}</text>
-
-    <!-- Subtle label -->
-    <text x="264" y="252" font-size="18" font-weight="600"
-          fill="rgba(150,168,215,0.6)" letter-spacing="2">TIER SCHEDULE</text>
-  `;
-
-  // Footer
+  // ── Footer ────────────────────────────────────────────────────────────────
   const footerY = height - footerHeight;
   const footerSvg = `
-    <line x1="56" y1="${footerY + 12}" x2="${width - 56}" y2="${footerY + 12}"
-          stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
-    <text x="${width - 60}" y="${footerY + 38}" text-anchor="end"
-          font-size="16" fill="rgba(100,118,168,0.7)"
-          letter-spacing="0.3">Generated from api.playcsa.com</text>
+    <line x1="${cardX}" y1="${footerY + 14}" x2="${width - cardX}" y2="${footerY + 14}"
+          stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    <text x="${width - cardX}" y="${footerY + 38}" text-anchor="end"
+          font-size="15" fill="rgba(85,105,165,0.58)"
+          letter-spacing="0.3">api.playcsa.com</text>
   `;
 
-  // Full SVG
+  // ── Full SVG ───────────────────────────────────────────────────────────────
   const svg = `
     <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"
          xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
-          <stop offset="0%"   stop-color="#060c1e"/>
-          <stop offset="50%"  stop-color="#0b1328"/>
-          <stop offset="100%" stop-color="#111e38"/>
-        </linearGradient>
-        <!-- Subtle radial glow from franchise color top-right -->
-        <radialGradient id="glowTR" cx="100%" cy="0%" r="55%">
-          <stop offset="0%"   stop-color="${franchiseColor}" stop-opacity="0.18"/>
-          <stop offset="100%" stop-color="${franchiseColor}" stop-opacity="0"/>
-        </radialGradient>
-        <!-- Subtle radial glow bottom-left cool -->
-        <radialGradient id="glowBL" cx="0%" cy="100%" r="45%">
-          <stop offset="0%"   stop-color="#1e3a6e" stop-opacity="0.25"/>
-          <stop offset="100%" stop-color="#1e3a6e" stop-opacity="0"/>
-        </radialGradient>
-      </defs>
-
-      <!-- Background -->
-      <rect width="${width}" height="${height}" fill="url(#bg)"/>
-      <rect width="${width}" height="${height}" fill="url(#glowTR)"/>
-      <rect width="${width}" height="${height}" fill="url(#glowBL)"/>
+      <rect width="${width}" height="${height}" fill="#07091c"/>
 
       <style>
         ${embeddedFontCss}
@@ -535,12 +555,9 @@ function formatMatchDate(isoString) {
   }).format(date);
 }
 
-function formatMatchTime(isoString) {
+function formatMatchTimeOnly(isoString) {
   const date = new Date(isoString);
   return new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
     timeZone: runtimeCfg.timezone,
