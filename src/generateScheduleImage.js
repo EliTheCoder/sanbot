@@ -5,12 +5,14 @@ import dotenv from 'dotenv';
 import sharp from 'sharp';
 
 dotenv.config();
+dotenv.config({ path: '.env.local', override: true });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const baseCfg = {
   csaBaseUrl: process.env.CSA_BASE_URL || 'https://api.playcsa.com',
+  csaApiKey: process.env.CSA_API_KEY || null,
   franchiseName: process.env.CSA_FRANCHISE_NAME || 'San Antonio Stallions',
   timezone: process.env.TIMEZONE || 'America/New_York',
   matchType: (argValue('--type') || process.env.CSA_MATCH_TYPE || '').toUpperCase(),
@@ -115,8 +117,8 @@ export async function generateTierScheduleImages(overrides = {}) {
     const tierTimesKey = normalizeText(tierName);
     const tierTimeSlots = TIER_TIMES[tierTimesKey] || null;
 
-    const rows = [];
-    for (const [i, match] of tierMatches.entries()) {
+    // Collect match metadata and kick off all logo fetches in parallel.
+    const matchMeta = tierMatches.map((match, i) => {
       const isHome = normalizeText(match.home) === normalizeText(cfg.franchiseName);
       const opponentName = isHome ? match.away : match.home;
       const opponentLogoUrl = logosByName.get(normalizeText(opponentName)) || null;
@@ -125,18 +127,27 @@ export async function generateTierScheduleImages(overrides = {}) {
       const isRescheduled = !!match.Reschedule?.reschedule_date;
       const tierTime = !isRescheduled && tierTimeSlots ? tierTimeSlots[i] : null;
       const matchDate = match.Reschedule?.reschedule_date || match.Match.date;
+      return { match, isHome, opponentName, opponentLogoUrl, captainName, isRescheduled, tierTime, matchDate };
+    });
 
-      rows.push({
-        opponentName,
-        captainName,
-        opponentLogoData: await loadLogoDataUri(opponentLogoUrl),
-        homeAway: isHome ? 'HOME' : 'AWAY',
-        matchNum: match.Match.match_num,
-        dateText: formatMatchDate(matchDate),
-        timeText: tierTime ?? formatMatchTimeOnly(matchDate),
-        boText: `BO${match.Match.best_of}`,
-      });
-    }
+    const opponentLogoDataList = await Promise.all(
+      matchMeta.map((m) => loadLogoDataUri(m.opponentLogoUrl))
+    );
+
+    const rows = matchMeta.map((m, i) => {
+      const resolvedTimeText = m.tierTime ?? formatMatchTimeOnly(m.matchDate);
+      return {
+        opponentName: m.opponentName,
+        captainName: m.captainName,
+        opponentLogoData: opponentLogoDataList[i],
+        homeAway: m.isHome ? 'HOME' : 'AWAY',
+        matchNum: m.match.Match.match_num,
+        dateText: formatMatchDate(m.matchDate),
+        timeText: resolvedTimeText,
+        boText: `BO${m.match.Match.best_of}`,
+        unixTimestamp: matchUnixTimestamp(m.matchDate, m.isRescheduled, m.tierTime, cfg.timezone),
+      };
+    });
 
     const png = await renderTierSchedulePng({
       seasonNumber: season.number,
@@ -151,13 +162,16 @@ export async function generateTierScheduleImages(overrides = {}) {
       rows,
       embeddedFontCss,
     });
-
     const safeTier = slugify(tierName);
     const fileName = `${slugify(cfg.franchiseName)}-${matchType.toLowerCase()}-week-${anchorMatchNum}-${safeTier}.png`;
     const outPath = path.join(cfg.outDir, fileName);
 
     await fs.writeFile(outPath, png);
-    rendered.push({ tierName, outPath });
+    // Expose rows (without heavy logo data) for Discord message building.
+    const messageRows = rows.map(({ opponentName, captainName, homeAway, matchNum, dateText, timeText, boText, unixTimestamp }) =>
+      ({ opponentName, captainName, homeAway, matchNum, dateText, timeText, boText, unixTimestamp })
+    );
+    rendered.push({ tierName, outPath, rows: messageRows });
   }
 
   return {
@@ -510,7 +524,9 @@ async function csaGet(pathname, query = {}, options = {}) {
     url.searchParams.set('page', String(page));
     url.searchParams.set('size', String(pageSize));
 
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const reqHeaders = { Accept: 'application/json' };
+    if (runtimeCfg.csaApiKey) reqHeaders['X-Api-Key'] = runtimeCfg.csaApiKey;
+    const res = await fetch(url, { headers: reqHeaders });
     if (!res.ok) {
       const body = await res.text();
       throw new Error(`CSA request failed (${res.status}) ${url.pathname}: ${body.slice(0, 220)}`);
@@ -541,7 +557,7 @@ async function csaGet(pathname, query = {}, options = {}) {
 async function loadLogoDataUri(url) {
   if (!url) return null;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const contentType = res.headers.get('content-type') || 'image/png';
     const bytes = Buffer.from(await res.arrayBuffer());
@@ -551,8 +567,64 @@ async function loadLogoDataUri(url) {
   }
 }
 
+// The CSA API returns dates as "YYYY-MM-DDTHH:MM:SS" with no timezone suffix.
+// Without a Z/offset, JS Date parses them as local time (UTC on the VM), so
+// midnight UTC becomes the previous evening in ET (Sunday → Saturday).
+// Detect any tz-less string and anchor it to noon UTC so it always lands on
+// the correct calendar date in any North American timezone.
+function normalizeMatchDate(isoString) {
+  const s = String(isoString);
+  return /Z|[+-]\d{2}:?\d{2}$/.test(s) ? s : s.slice(0, 10) + 'T12:00:00Z';
+}
+
+// Parse a time string like "7:45 PM ET" → { hours: 19, minutes: 45 }, or null.
+function parseTimeText(timeText) {
+  const m = String(timeText).match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!m) return null;
+  let hours = parseInt(m[1], 10);
+  const minutes = parseInt(m[2], 10);
+  if (m[3].toUpperCase() === 'PM' && hours !== 12) hours += 12;
+  if (m[3].toUpperCase() === 'AM' && hours === 12) hours = 0;
+  return { hours, minutes };
+}
+
+// Convert a local clock time (hours, minutes) on a given date string (YYYY-MM-DD)
+// in the configured timezone to a Unix timestamp (seconds).
+function localTimeToUnix(datePart, hours, minutes, timezone) {
+  // Treat the desired local time as UTC (a "fake" UTC), then see what local time
+  // that fake UTC actually maps to, compute the delta, and correct.
+  const fakeUtc = new Date(
+    `${datePart}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00Z`
+  );
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(fakeUtc);
+  const localHour = parseInt(parts.find((p) => p.type === 'hour').value, 10);
+  const localMin = parseInt(parts.find((p) => p.type === 'minute').value, 10);
+  const diffMs = (hours * 60 + minutes - (localHour * 60 + localMin)) * 60_000;
+  return Math.floor((fakeUtc.getTime() + diffMs) / 1000);
+}
+
+// Return a Unix timestamp (seconds) for a match, or null if the time is unknown.
+function matchUnixTimestamp(rawMatchDate, isRescheduled, tierTime, timezone) {
+  const s = String(rawMatchDate);
+  // Rescheduled with a real datetime+tz from the API → use directly.
+  if (isRescheduled && /Z|[+-]\d{2}:?\d{2}$/.test(s) && s.length > 10) {
+    return Math.floor(new Date(s).getTime() / 1000);
+  }
+  // Known tier time string (e.g. "7:45 PM ET") → combine with date.
+  if (tierTime) {
+    const parsed = parseTimeText(tierTime);
+    if (parsed) return localTimeToUnix(s.slice(0, 10), parsed.hours, parsed.minutes, timezone);
+  }
+  return null;
+}
+
 function formatMatchDate(isoString) {
-  const date = new Date(isoString);
+  const date = new Date(normalizeMatchDate(isoString));
   return new Intl.DateTimeFormat('en-US', {
     weekday: 'short',
     month: 'short',
@@ -562,7 +634,7 @@ function formatMatchDate(isoString) {
 }
 
 function formatMatchTimeOnly(isoString) {
-  const date = new Date(isoString);
+  const date = new Date(normalizeMatchDate(isoString));
   return new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
     minute: '2-digit',

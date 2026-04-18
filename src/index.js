@@ -10,6 +10,7 @@ import {
 import { generateTierScheduleImages } from './generateScheduleImage.js';
 
 dotenv.config();
+dotenv.config({ path: '.env.local', override: true });
 
 const cfg = {
   discordToken: req('DISCORD_TOKEN'),
@@ -17,6 +18,7 @@ const cfg = {
   franchiseName: process.env.CSA_FRANCHISE_NAME || 'San Antonio Stallions',
   scheduleChannelName: (process.env.SCHEDULE_CHANNEL_NAME || 'schedule').toLowerCase(),
   csaBaseUrl: process.env.CSA_BASE_URL || 'https://api.playcsa.com',
+  csaApiKey: process.env.CSA_API_KEY || null,
   timezone: process.env.TIMEZONE || 'America/New_York',
   stageOverride: process.env.CSA_MATCH_TYPE?.toUpperCase(),
   outputDir: process.env.SCHEDULE_IMAGE_OUT_DIR,
@@ -66,8 +68,10 @@ async function postTierScheduleImages(selectedTier, weekNum) {
   const guild = await client.guilds.fetch(cfg.guildId);
   await guild.channels.fetch();
 
+  log('info', `Rendering schedule images${selectedTier ? ` for tier: ${selectedTier}` : ' for all tiers'}…`);
   const renderResult = await generateTierScheduleImages({
     csaBaseUrl: cfg.csaBaseUrl,
+    csaApiKey: cfg.csaApiKey,
     franchiseName: cfg.franchiseName,
     timezone: cfg.timezone,
     matchType: cfg.stageOverride,
@@ -75,6 +79,7 @@ async function postTierScheduleImages(selectedTier, weekNum) {
     tierName: selectedTier,
     outDir: cfg.outputDir,
   });
+  log('info', `Rendered ${renderResult.rendered.length} tier image(s). Posting to Discord…`);
 
   let sentCount = 0;
   for (const item of renderResult.rendered) {
@@ -83,9 +88,21 @@ async function postTierScheduleImages(selectedTier, weekNum) {
       log('warn', `No #${cfg.scheduleChannelName} channel found for tier "${item.tierName}"`);
       continue;
     }
+    log('info', `Posting ${item.tierName} to #${channel.name}…`);
+
+    const matchLines = item.rows.map((row) => {
+      const ts = row.unixTimestamp ? `<t:${row.unixTimestamp}:F>` : `${row.dateText} · ${row.timeText}`;
+      return `${row.homeAway} · Match ${row.matchNum} vs **${row.opponentName}** — ${ts}`;
+    });
+    const content = [
+      `**${cfg.franchiseName} — ${item.tierName}**`,
+      `Season ${renderResult.seasonNumber} · ${renderResult.matchType} · Week ${renderResult.displayWeekNum}`,
+      '',
+      ...matchLines,
+    ].join('\n');
 
     await channel.send({
-      content: `**${cfg.franchiseName} - ${item.tierName}**\nSeason ${renderResult.seasonNumber} | ${renderResult.matchType} Week ${renderResult.displayWeekNum}`,
+      content,
       files: [path.resolve(item.outPath)],
     });
 
